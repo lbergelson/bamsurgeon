@@ -81,6 +81,24 @@ def svmask(rec, vcfh, truchroms):
                     return True
     return False
 
+def computeF1(results):
+    
+    tpcount = results["tp"]
+    fpcount = results["fp"]
+    subrecs = results["observed"]
+    trurecs = results["true"]
+    print "***********************************"
+    print "tpcount, fpcount, subrecs, trurecs:"
+    print tpcount, fpcount, subrecs, trurecs
+
+    recall    = 0.0 if trurecs == 0 else float(tpcount) / float(trurecs)
+    precision = 0.0 if tpcount + fpcount == 0 else float(tpcount) / float(tpcount + fpcount)
+    f1score   = 0.0 if precision + recall == 0 else 2.0*(precision*recall)/(precision+recall)
+    print "recall, precision, f1score:"
+    print recall, precision, f1score
+    print "***********************************"
+    return (recall, precision, f1score)
+
 
 def evaluate(submission, truth, vtype='SNV', ignorechroms=None, ignorepass=False, printfp=False):
     ''' return stats on sensitivity, specificity, balanced accuracy '''
@@ -139,15 +157,22 @@ def evaluate(submission, truth, vtype='SNV', ignorechroms=None, ignorepass=False
                 if printfp:
                     print "FP:", subrec
 
-    print "tpcount, fpcount, subrecs, trurecs:"
-    print tpcount, fpcount, subrecs, trurecs
+    
+    return {"tp":tpcount, "fp":fpcount, "observed":subrecs, "true":trurecs}
 
-    recall    = float(tpcount) / float(trurecs)
-    precision = float(tpcount) / float(tpcount + fpcount)
-    fdr       = 1.0 - float(fpcount) / float(subrecs)
-    f1score   = 0.0 if tpcount == 0 else 2.0*(precision*recall)/(precision+recall)
+def outputLeaderboardStats(output_file,snv, indel):
+    header = "\t".join(["tp_snp", "fp_snp", "novel_snp", "fn_snp", "tp_indel", "fp_indel", "novel_indel", "fn_indel\n"])
 
-    return precision, recall, f1score
+    def reformat(results):
+        return [results["tp"], results["fp"], 0 , results["true"] - results["tp"]]
+    
+    snv_data = reformat(snv)
+    indel_data = reformat(indel)
+    data_line = "\t".join([str(x) for x in snv_data+indel_data])
+    with open(output_file,"w") as out:
+        out.write(header)
+        out.write(data_line)
+
 
 def main(args):
 
@@ -163,19 +188,22 @@ def main(args):
         sys.stderr.write("truth VCF does not appear to be indexed. bgzip + tabix index required.\n")
         sys.exit(1)
 
-    if args.mutype not in ('SV', 'SNV', 'INDEL'):
-        sys.stderr.write("-m/--mutype must be either SV, SNV, or INDEL\n")
-        sys.exit(1)
+    result_snv = evaluate(args.subvcf, args.truvcf, vtype="SNV", ignorechroms=chromlist, ignorepass=args.nonpass, printfp=args.printfp)
+    result_indel = evaluate(args.subvcf, args.truvcf, vtype="INDEL", ignorechroms=chromlist, ignorepass=args.nonpass, printfp=args.printfp)
+    
+    print("Snv stats")
+    computeF1(result_snv)
+    print("Indel stats")
+    computeF1(result_indel)
 
-    result = evaluate(args.subvcf, args.truvcf, vtype=args.mutype, ignorechroms=chromlist, ignorepass=args.nonpass, printfp=args.printfp)
-
-    print "precision, recall, F1 score: " + ','.join(map(str, result))
+    outputLeaderboardStats(args.leaderboard_file, result_snv, result_indel)
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="check vcf output against a 'truth' vcf")
     parser.add_argument('-v',  '--vcf',    dest='subvcf', required=True, help="VCF being submitted for evaluation")
     parser.add_argument('-t',  '--truth',  dest='truvcf', required=True, help="'Truth' VCF containing true positives")
-    parser.add_argument('-m', '--mutype', dest='mutype', required=True, help="Mutation type: must be either SNV, SV, or INDEL")
+    parser.add_argument('-o',  '--leaderboard_stats', dest="leaderboard_file", required=True, help="Output file for leaderboard stats")
     parser.add_argument('--ignore', dest='chromlist', default=None, help="(optional) comma-seperated list of chromosomes to ignore")
     parser.add_argument('--nonpass', dest='nonpass', action="store_true", help="evaluate all records (not just PASS records) in VCF")
     parser.add_argument('--printfp', dest='printfp', action="store_true", help="output false positive positions")
